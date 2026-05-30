@@ -1,123 +1,113 @@
 'use client';
-import { useEffect, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useState, Suspense } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { supabase } from '@/lib/supabase';
-import { Slot } from '@/lib/types';
 
-function formatDate(dateStr: string) {
-  const d = new Date(dateStr + 'T00:00:00');
-  return d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+function formatDate(d: string) {
+  return new Date(d + 'T00:00:00').toLocaleDateString('en-GB', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+  });
 }
 
-export default function BookPage() {
-  const router = useRouter();
-  const params = useSearchParams();
-  const slotId = params.get('slot');
+function formatTime(t: string) {
+  const [h, m] = t.split(':');
+  const hour = parseInt(h);
+  return `${hour % 12 || 12}:${m} ${hour >= 12 ? 'PM' : 'AM'}`;
+}
 
-  const [slot, setSlot] = useState<Slot | null>(null);
-  const [loading, setLoading] = useState(true);
+function BookForm() {
+  const params = useSearchParams();
+  const router = useRouter();
+  const slotId = params.get('slot') || '';
+  const date = params.get('date') || '';
+  const time = params.get('time') || '';
+
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
-  const [submitting, setSubmitting] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-
-  useEffect(() => {
-    if (!slotId) { setLoading(false); return; }
-    supabase.from('slots').select('*').eq('id', slotId).single()
-      .then(({ data }) => { setSlot(data); setLoading(false); });
-  }, [slotId]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!slot) return;
+    if (!slotId) { setError('No slot selected. Please go back and choose a slot.'); return; }
+    setLoading(true);
     setError('');
-    if (!name.trim() || !phone.trim()) { setError('Please fill in all fields.'); return; }
-    if (!/^[\d\s+\-()]{7,15}$/.test(phone.trim())) { setError('Please enter a valid phone number.'); return; }
-    setSubmitting(true);
-    const { data, error: insertErr } = await supabase
-      .from('bookings')
-      .insert({ patient_name: name.trim(), phone: phone.trim(), slot_id: slot.id, paid: false, confirmed: false })
-      .select('id')
-      .single();
-    if (insertErr || !data) {
-      setError('Something went wrong. Please try again.');
-      setSubmitting(false);
+    const res = await fetch('/api/bookings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ patient_name: name, phone, slot_id: slotId }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setError(data.error || 'Something went wrong. Please try again.');
+      setLoading(false);
       return;
     }
-    // mark slot unavailable
-    await supabase.from('slots').update({ available: false }).eq('id', slot.id);
-    router.push(`/confirmation?booking=${data.id}&date=${slot.date}&time=${slot.time}`);
+    router.push(`/confirmation?name=${encodeURIComponent(name)}&date=${date}&time=${time}`);
   }
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center"><p className="text-gray-400">Loading slot details...</p></div>;
+  return (
+    <div className="min-h-screen bg-slate-50 flex items-start justify-center px-4 py-12">
+      <div className="w-full max-w-md">
+        <Link href="/" className="text-teal-600 text-sm font-medium hover:underline mb-6 inline-block">
+          ← Back to slots
+        </Link>
 
-  if (!slot) return (
-    <div className="min-h-screen flex flex-col items-center justify-center gap-4">
-      <p className="text-gray-600">Slot not found or no longer available.</p>
-      <Link href="/" className="text-teal-600 underline">← Back to slots</Link>
+        {/* Slot summary */}
+        {date && time && (
+          <div className="bg-teal-50 border border-teal-100 rounded-2xl px-5 py-4 mb-6">
+            <p className="text-xs text-teal-600 font-medium uppercase tracking-wide mb-1">Selected Session</p>
+            <p className="font-semibold text-teal-800">{formatDate(date)}</p>
+            <p className="text-teal-700 text-sm">{formatTime(time)}</p>
+          </div>
+        )}
+
+        <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-8">
+          <h1 className="text-2xl font-semibold text-slate-800 mb-1">Book Your Session</h1>
+          <p className="text-slate-500 text-sm mb-6">Fill in your details and we will confirm your appointment.</p>
+
+          <form onSubmit={handleSubmit} className="space-y-5">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Full Name</label>
+              <input
+                type="text"
+                value={name}
+                onChange={e => setName(e.target.value)}
+                required
+                placeholder="Your full name"
+                className="w-full border border-slate-200 rounded-lg px-4 py-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-400"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Phone Number</label>
+              <input
+                type="tel"
+                value={phone}
+                onChange={e => setPhone(e.target.value)}
+                required
+                placeholder="e.g. 010xxxxxxxx"
+                className="w-full border border-slate-200 rounded-lg px-4 py-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-400"
+              />
+            </div>
+            {error && <p className="text-red-500 text-sm">{error}</p>}
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full bg-teal-600 hover:bg-teal-700 text-white font-semibold py-3 rounded-lg transition-colors disabled:opacity-50"
+            >
+              {loading ? 'Submitting…' : 'Confirm Booking'}
+            </button>
+          </form>
+        </div>
+      </div>
     </div>
   );
+}
 
+export default function BookPage() {
   return (
-    <div className="min-h-screen bg-gradient-to-br from-teal-50 via-white to-teal-50">
-      <header className="bg-white shadow-sm border-b border-teal-100">
-        <div className="max-w-3xl mx-auto px-4 py-5 flex items-center gap-4">
-          <Link href="/" className="text-teal-600 hover:text-teal-800 text-sm font-medium">← Back</Link>
-          <div>
-            <h1 className="text-xl font-semibold text-gray-900">Complete Your Booking</h1>
-          </div>
-        </div>
-      </header>
-
-      <main className="max-w-lg mx-auto px-4 py-12">
-        {/* Selected slot */}
-        <div className="bg-teal-600 text-white rounded-2xl px-6 py-5 mb-8 shadow">
-          <p className="text-teal-100 text-sm font-medium mb-1">Your selected session</p>
-          <p className="text-2xl font-bold">{slot.time.slice(0, 5)}</p>
-          <p className="text-teal-100 text-sm mt-1">{formatDate(slot.date)}</p>
-        </div>
-
-        <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-5">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Your full name"
-              className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 transition"
-              required
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Phone Number</label>
-            <input
-              type="tel"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              placeholder="e.g. 01012345678"
-              className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 transition"
-              required
-            />
-            <p className="text-xs text-gray-400 mt-1">We&apos;ll use this to confirm your booking.</p>
-          </div>
-
-          {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">
-              {error}
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={submitting}
-            className="w-full bg-teal-600 hover:bg-teal-700 text-white font-semibold py-3 rounded-xl transition disabled:opacity-60"
-          >
-            {submitting ? 'Booking...' : 'Confirm Booking →'}
-          </button>
-        </form>
-      </main>
-    </div>
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-slate-400">Loading…</div>}>
+      <BookForm />
+    </Suspense>
   );
 }
